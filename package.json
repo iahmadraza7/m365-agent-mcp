@@ -1,0 +1,28 @@
+{
+  "name": "m365-agent-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Custom MCP server giving each ChatGPT workspace agent its own Microsoft 365 mailbox for email read and send.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.26.0",
+    "mcp-handler": "1.1.0",
+    "next": "15.5.20",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "zod": "3.25.76"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.6",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "typescript": "5.8.2"
+  }
+}
