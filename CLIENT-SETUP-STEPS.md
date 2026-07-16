@@ -28,25 +28,42 @@ There are two sides. Part A is Microsoft. Part B is ChatGPT. Part C is for later
 
 Only these two permissions are used. Nothing wider is requested.
 
-### A3. Lock access to only the three mailboxes
+### A3. Lock access to only the three mailboxes (App RBAC)
 
-By default an approved app can reach every mailbox in the tenant. This step removes that. It is not optional.
+By default an approved app can reach every mailbox in the tenant. This step removes that. It is not optional. We use Exchange Online App RBAC (the older `New-ApplicationAccessPolicy` method is now legacy).
 
-1. Create a mail enabled security group containing the three mailboxes.
-2. Connect to Exchange Online PowerShell.
-3. Run, replacing the client id and the group address:
+First, get the app's **Enterprise Application Object ID**: Entra admin center, then Enterprise applications, then open the app, then copy the Object ID from Overview. This is different from the Object ID under App registrations, so use the Enterprise applications one.
 
+Connect to Exchange Online PowerShell, then run these, replacing `<CLIENT_ID>`, `<ENTERPRISE_APP_OBJECT_ID>`, and the group address:
+
+```powershell
+# 1. Mail-enabled security group with the three mailboxes
+New-DistributionGroup -Name "Agent Mailboxes" -Alias "agent-mailboxes" -Type Security -PrimarySmtpAddress "<GROUP_ADDRESS>"
+Add-DistributionGroupMember -Identity "<GROUP_ADDRESS>" -Member "reservations@kwantu.co.za"
+Add-DistributionGroupMember -Identity "<GROUP_ADDRESS>" -Member "assistant@kwantu.co.za"
+Add-DistributionGroupMember -Identity "<GROUP_ADDRESS>" -Member "assistant@sapphireglobalfs.com"
+
+# 2. Scope that resolves to that group's members
+$group = Get-Group "<GROUP_ADDRESS>"
+New-ManagementScope -Name "Agent Mailboxes" -RecipientRestrictionFilter "MemberOfGroup -eq '$($group.DistinguishedName)'"
+
+# 3. Register the app service principal (ObjectId is the Enterprise Application Object ID)
+New-ServicePrincipal -AppId "<CLIENT_ID>" -ObjectId "<ENTERPRISE_APP_OBJECT_ID>" -DisplayName "Agent Mailbox Connector"
+
+# 4. Grant Mail.Read and Mail.Send, limited to the scope above
+New-ManagementRoleAssignment -Name "Agent Mail Read" -App "<ENTERPRISE_APP_OBJECT_ID>" -Role "Application Mail.Read" -CustomResourceScope "Agent Mailboxes"
+New-ManagementRoleAssignment -Name "Agent Mail Send" -App "<ENTERPRISE_APP_OBJECT_ID>" -Role "Application Mail.Send" -CustomResourceScope "Agent Mailboxes"
 ```
-New-ApplicationAccessPolicy -AppId <CLIENT_ID> -PolicyScopeGroupId <GROUP_ADDRESS> -AccessRight RestrictAccess -Description "Restrict agent mailbox connector"
+
+Then verify each mailbox:
+
+```powershell
+Test-ServicePrincipalAuthorization -Identity "<ENTERPRISE_APP_OBJECT_ID>" -Resource "reservations@kwantu.co.za"
+Test-ServicePrincipalAuthorization -Identity "<ENTERPRISE_APP_OBJECT_ID>" -Resource "assistant@kwantu.co.za"
+Test-ServicePrincipalAuthorization -Identity "<ENTERPRISE_APP_OBJECT_ID>" -Resource "assistant@sapphireglobalfs.com"
 ```
 
-4. Verify each mailbox:
-
-```
-Test-ApplicationAccessPolicy -AppId <CLIENT_ID> -Identity reservations@kwantu.co.za
-```
-
-Run it for all three, and once for an unrelated mailbox, which should come back denied. The policy can take up to an hour to fully apply.
+Run it once more for an unrelated mailbox, which should come back out of scope. Graph authorization changes can take up to a couple of hours to propagate, but this test command bypasses that cache.
 
 Note: if the two domains turn out to be in separate Microsoft tenants, Part A is repeated once inside the second tenant. We will see this immediately when we look at the admin center.
 

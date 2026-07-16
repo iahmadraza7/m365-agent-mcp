@@ -48,11 +48,15 @@ In Microsoft Entra admin center:
    - `Mail.Send`
 4. Grant admin consent for the tenant.
 
-Recommended tenant safety control: restrict the app to only the three agent mailboxes with an Exchange Online application access policy.
+Required tenant safety control: restrict the app to only the three agent mailboxes using **Exchange Online App RBAC** (Role Based Access Control for Applications). Without this, an admin-consented app can reach every mailbox in the tenant.
+
+> Note: the older `New-ApplicationAccessPolicy` method is now legacy. Use App RBAC below.
 
 ```powershell
 Connect-ExchangeOnline
 
+# 1. Mail-enabled security group containing the three mailboxes.
+#    Use a different PrimarySmtpAddress if kwantu.co.za is not an accepted domain.
 New-DistributionGroup `
   -Name "M365 Agent MCP Mailboxes" `
   -Alias "m365-agent-mcp-mailboxes" `
@@ -63,18 +67,41 @@ Add-DistributionGroupMember -Identity "m365-agent-mcp-mailboxes@kwantu.co.za" -M
 Add-DistributionGroupMember -Identity "m365-agent-mcp-mailboxes@kwantu.co.za" -Member "assistant@kwantu.co.za"
 Add-DistributionGroupMember -Identity "m365-agent-mcp-mailboxes@kwantu.co.za" -Member "assistant@sapphireglobalfs.com"
 
-New-ApplicationAccessPolicy `
-  -AppId "<CLIENT_ID>" `
-  -PolicyScopeGroupId "m365-agent-mcp-mailboxes@kwantu.co.za" `
-  -AccessRight RestrictAccess `
-  -Description "Restrict M365 Agent MCP to approved agent mailboxes"
+# 2. Scope that resolves to the members of that group.
+$group = Get-Group "m365-agent-mcp-mailboxes@kwantu.co.za"
+New-ManagementScope `
+  -Name "M365 Agent MCP Mailboxes" `
+  -RecipientRestrictionFilter "MemberOfGroup -eq '$($group.DistinguishedName)'"
 
-Test-ApplicationAccessPolicy -Identity "reservations@kwantu.co.za" -AppId "<CLIENT_ID>"
-Test-ApplicationAccessPolicy -Identity "assistant@kwantu.co.za" -AppId "<CLIENT_ID>"
-Test-ApplicationAccessPolicy -Identity "assistant@sapphireglobalfs.com" -AppId "<CLIENT_ID>"
+# 3. Register the app's service principal in Exchange.
+#    IMPORTANT: <ENTERPRISE_APP_OBJECT_ID> is the Object ID from
+#    Entra > Enterprise applications > (your app), NOT from App registrations.
+New-ServicePrincipal `
+  -AppId "<CLIENT_ID>" `
+  -ObjectId "<ENTERPRISE_APP_OBJECT_ID>" `
+  -DisplayName "M365 Agent MCP"
+
+# 4. Grant Mail.Read and Mail.Send, both limited to the scope above.
+New-ManagementRoleAssignment `
+  -Name "M365 Agent MCP Mail Read" `
+  -App "<ENTERPRISE_APP_OBJECT_ID>" `
+  -Role "Application Mail.Read" `
+  -CustomResourceScope "M365 Agent MCP Mailboxes"
+
+New-ManagementRoleAssignment `
+  -Name "M365 Agent MCP Mail Send" `
+  -App "<ENTERPRISE_APP_OBJECT_ID>" `
+  -Role "Application Mail.Send" `
+  -CustomResourceScope "M365 Agent MCP Mailboxes"
+
+# 5. Verify. The three approved mailboxes should be in scope; an unrelated one should not.
+Test-ServicePrincipalAuthorization -Identity "<ENTERPRISE_APP_OBJECT_ID>" -Resource "reservations@kwantu.co.za"
+Test-ServicePrincipalAuthorization -Identity "<ENTERPRISE_APP_OBJECT_ID>" -Resource "assistant@kwantu.co.za"
+Test-ServicePrincipalAuthorization -Identity "<ENTERPRISE_APP_OBJECT_ID>" -Resource "assistant@sapphireglobalfs.com"
+Test-ServicePrincipalAuthorization -Identity "<ENTERPRISE_APP_OBJECT_ID>" -Resource "<unrelated-mailbox@your-domain>"
 ```
 
-Use a different `PrimarySmtpAddress` for the security group if `kwantu.co.za` is not an accepted domain in the tenant.
+Live Graph authorization changes can take up to a couple of hours to propagate, but `Test-ServicePrincipalAuthorization` bypasses that cache for verification.
 
 ## Environment Variables
 
@@ -194,10 +221,11 @@ http://localhost:3000
 ## Validation Checklist
 
 - Unknown agent key returns HTTP 404.
+- If `MCP_AUTH_TOKEN` is set, requests without the correct `Authorization: Bearer` header return HTTP 401.
 - Each known key can list/read only its mapped mailbox.
 - `send_email` sends from the mapped mailbox and saves to Sent Items.
-- Exchange Online application access policy test passes for the three allowed mailboxes.
-- Exchange Online application access policy test fails for an unrelated mailbox.
+- `Test-ServicePrincipalAuthorization` shows the three allowed mailboxes in scope.
+- `Test-ServicePrincipalAuthorization` shows an unrelated mailbox out of scope.
 
 ## Client Secret Renewal
 

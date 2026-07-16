@@ -7,6 +7,7 @@ import {
   sendEmail,
 } from "../../../../../lib/graph";
 import { resolveMailbox } from "../../../../../lib/mailboxes";
+import { checkAuth } from "../../../../../lib/auth";
 
 export const maxDuration = 60;
 
@@ -75,11 +76,15 @@ function buildHandler(agentKey: string, mailbox: string) {
           description: "Send an email from this agent's mailbox.",
           inputSchema: {
             to: z.array(z.string().email()).min(1),
-            subject: z.string(),
-            body: z.string(),
+            subject: z.string().min(1),
+            body: z.string().min(1),
             cc: z.array(z.string().email()).optional(),
           },
-          annotations: { destructiveHint: true, openWorldHint: true },
+          annotations: {
+            readOnlyHint: false,
+            destructiveHint: true,
+            openWorldHint: true,
+          },
         },
         async ({ to, subject, body, cc }) => {
           await sendEmail(mailbox, { to, subject, body, cc });
@@ -103,6 +108,9 @@ async function handle(
   request: Request,
   ctx: { params: Promise<{ agent: string }> }
 ) {
+  if (!checkAuth(request)) {
+    return new Response("Unauthorized", { status: 401 });
+  }
   const { agent } = await ctx.params;
   const mailbox = resolveMailbox(agent);
   if (!mailbox) {
